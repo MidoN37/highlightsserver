@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HooFoot Viewer - TV Remote Compatible</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        
+        body { 
+            font-family: sans-serif; 
+            background-color: #121212; 
+            color: #e0e0e0; 
+            margin: 0; 
+            padding: 20px;
+            overflow-x: hidden;
+        }
+        
+        h1 { 
+            text-align: center; 
+            color: #fff; 
+            margin-bottom: 30px;
+        }
+        
+        #loading { 
+            text-align: center; 
+            font-size: 1.2em; 
+        }
+        
+        #match-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 20px;
+            max-width: 1400px;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+        
+        .match-card {
+            background-color: #1e1e1e;
+            border-radius: 8px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+            border: 3px solid transparent;
+            position: relative;
+        }
+        
+        .match-card:focus,
+        .match-card.focused {
+            outline: none;
+            border: 3px solid #00ff00;
+            transform: scale(1.05);
+            box-shadow: 0 8px 20px rgba(0,255,0,0.3);
+            z-index: 10;
+        }
+        
+        .match-card img { 
+            width: 100%; 
+            height: 180px; 
+            object-fit: cover; 
+            display: block; 
+        }
+        
+        .match-card h2 { 
+            font-size: 1.1em; 
+            margin: 0; 
+            padding: 15px; 
+            text-align: center; 
+        }
+        
+        #video-modal { 
+            display: none; 
+            position: fixed; 
+            z-index: 1000; 
+            left: 0; 
+            top: 0; 
+            width: 100vw; 
+            height: 100vh; 
+            background-color: rgba(0,0,0,0.95); 
+        }
+        
+        #video-modal.modal-visible { 
+            display: block; 
+        }
+        
+        #modal-content { 
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            background-color: #000;
+        }
+        
+        #video-header {
+            background-color: rgba(0,0,0,0.8);
+            color: white;
+            padding: 20px;
+            position: relative;
+            z-index: 1001;
+        }
+        
+        #close-modal { 
+            color: #aaa; 
+            position: absolute; 
+            top: 15px; 
+            right: 25px; 
+            font-size: 35px; 
+            font-weight: bold; 
+            cursor: pointer;
+            border: 2px solid transparent;
+            border-radius: 5px;
+            padding: 5px 10px;
+            transition: all 0.3s ease;
+        }
+        
+        #close-modal:hover,
+        #close-modal:focus { 
+            color: #fff; 
+            border: 2px solid #00ff00;
+            outline: none;
+        }
+        
+        #video-player { 
+            width: 100vw; 
+            height: calc(100vh - 80px);
+            background-color: #000;
+            object-fit: contain;
+        }
+        
+        #video-title { 
+            margin: 0;
+            font-size: 1.5em;
+        }
+        
+        #video-loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 1.2em;
+            color: white;
+            z-index: 1002;
+        }
+        
+        .navigation-hint {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background-color: rgba(0,0,0,0.8);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 5px;
+            font-size: 0.9em;
+            z-index: 100;
+        }
+        
+        /* Focus indicators for better TV navigation */
+        .match-card.focused::before {
+            content: '';
+            position: absolute;
+            top: -5px;
+            left: -5px;
+            right: -5px;
+            bottom: -5px;
+            background: linear-gradient(45deg, #00ff00, #00aa00);
+            border-radius: 13px;
+            z-index: -1;
+            animation: glow 2s ease-in-out infinite alternate;
+        }
+        
+        @keyframes glow {
+            from { opacity: 0.5; }
+            to { opacity: 1; }
+        }
+        
+        @media (max-width: 768px) {
+            #match-grid {
+                grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+                gap: 15px;
+                padding: 0 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>HooFoot Highlights - TV Remote Ready</h1>
+    <div id="loading">Loading matches...</div>
+    <div id="match-grid"></div>
+    
+    <div class="navigation-hint">
+        Use ↑↓←→ to navigate • Enter to play • Back/Escape to close video
+    </div>
+
+    <div id="video-modal">
+        <div id="modal-content">
+            <div id="video-header">
+                <h2 id="video-title"></h2>
+                <button id="close-modal" tabindex="0">&times;</button>
+            </div>
+            <video id="video-player" controls></video>
+            <p id="video-loading"></p>
+        </div>
+    </div>
+
+    <script>
+        // Dynamic URLs that work both locally and when deployed
+        const BASE_URL = window.location.origin;
+        const PROXY_BASE_URL = `${BASE_URL}/api/proxy?url=`;
+        const M3U8_REWRITE_URL = `${BASE_URL}/api/proxy?url=`;
+
+        let currentFocusIndex = 0;
+        let matchCards = [];
+        let isModalOpen = false;
+
+        document.addEventListener('DOMContentLoaded', () => {
+            setupModal();
+            setupKeyNavigation();
+            fetchMatches();
+        });
+        
+        function setupModal() {
+            const modal = document.getElementById('video-modal');
+            const closeBtn = document.getElementById('close-modal');
+            
+            closeBtn.onclick = closeModal;
+            closeBtn.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    closeModal();
+                }
+            });
+        }
+        
+        function closeModal() {
+            const modal = document.getElementById('video-modal');
+            modal.classList.remove('modal-visible');
+            isModalOpen = false;
+            
+            const video = document.getElementById('video-player');
+            if (video.hls) { 
+                video.hls.destroy(); 
+                video.hls = null;
+            }
+            video.src = '';
+            
+            // Return focus to the selected card
+            if (matchCards[currentFocusIndex]) {
+                matchCards[currentFocusIndex].focus();
+            }
+        }
+        
+        function setupKeyNavigation() {
+            document.addEventListener('keydown', (e) => {
+                // If modal is open, handle modal navigation
+                if (isModalOpen) {
+                    switch(e.key) {
+                        case 'Escape':
+                        case 'Backspace':
+                            e.preventDefault();
+                            closeModal();
+                            break;
+                        case 'ArrowLeft':
+                        case 'ArrowRight':
+                        case 'ArrowUp':
+                        case 'ArrowDown':
+                            // Focus on close button with arrow keys in modal
+                            e.preventDefault();
+                            document.getElementById('close-modal').focus();
+                            break;
+                    }
+                    return;
+                }
+                
+                // Handle grid navigation
+                const gridCols = getGridColumns();
+                const totalCards = matchCards.length;
+                
+                if (totalCards === 0) return;
+                
+                let newIndex = currentFocusIndex;
+                
+                switch(e.key) {
+                    case 'ArrowRight':
+                        newIndex = (currentFocusIndex + 1) % totalCards;
+                        break;
+                    case 'ArrowLeft':
+                        newIndex = currentFocusIndex - 1;
+                        if (newIndex < 0) newIndex = totalCards - 1;
+                        break;
+                    case 'ArrowDown':
+                        newIndex = currentFocusIndex + gridCols;
+                        if (newIndex >= totalCards) {
+                            // Go to first item in the same column, or first item if column doesn't exist
+                            const currentCol = currentFocusIndex % gridCols;
+                            newIndex = currentCol;
+                        }
+                        break;
+                    case 'ArrowUp':
+                        newIndex = currentFocusIndex - gridCols;
+                        if (newIndex < 0) {
+                            // Go to last row, same column
+                            const currentCol = currentFocusIndex % gridCols;
+                            const lastRowStart = Math.floor((totalCards - 1) / gridCols) * gridCols;
+                            newIndex = Math.min(lastRowStart + currentCol, totalCards - 1);
+                        }
+                        break;
+                    case 'Enter':
+                    case ' ':
+                        e.preventDefault();
+                        if (matchCards[currentFocusIndex]) {
+                            matchCards[currentFocusIndex].click();
+                        }
+                        return;
+                }
+                
+                if (newIndex !== currentFocusIndex) {
+                    e.preventDefault();
+                    updateFocus(newIndex);
+                }
+            });
+        }
+        
+        function getGridColumns() {
+            const grid = document.getElementById('match-grid');
+            const gridStyle = window.getComputedStyle(grid);
+            const gridCols = gridStyle.getPropertyValue('grid-template-columns').split(' ').length;
+            return gridCols;
+        }
+        
+        function updateFocus(newIndex) {
+            // Remove focus from current card
+            if (matchCards[currentFocusIndex]) {
+                matchCards[currentFocusIndex].classList.remove('focused');
+                matchCards[currentFocusIndex].blur();
+            }
+            
+            // Set focus to new card
+            currentFocusIndex = newIndex;
+            if (matchCards[currentFocusIndex]) {
+                matchCards[currentFocusIndex].classList.add('focused');
+                matchCards[currentFocusIndex].focus();
+                matchCards[currentFocusIndex].scrollIntoView({ 
+                    behavior: 'smooth', 
+                    block: 'center' 
+                });
+            }
+        }
+
+        async function fetchMatches() {
+            const grid = document.getElementById('match-grid');
+            const loadingIndicator = document.getElementById('loading');
+            const proxyUrl = `${PROXY_BASE_URL}${encodeURIComponent('https://hoofoot.com/')}`;
+            
+            try {
+                const response = await fetch(proxyUrl);
+                if (!response.ok) throw new Error(`Proxy error: ${response.statusText}`);
+                
+                const htmlText = await response.text();
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(htmlText, 'text/html');
+                const matchElements = doc.querySelectorAll('div[id^="port"]');
+                
+                if (matchElements.length === 0) { 
+                    loadingIndicator.textContent = "Could not find any matches."; 
+                    return; 
+                }
+                
+                loadingIndicator.style.display = 'none';
+                
+                matchElements.forEach((matchEl, index) => {
+                    const titleElement = matchEl.querySelector('h2');
+                    const linkElement = matchEl.querySelector('a');
+                    const imageElement = matchEl.querySelector('img');
+                    
+                    if (titleElement && linkElement && imageElement) {
+                        const title = titleElement.textContent.trim();
+                        const matchRelativeUrl = linkElement.getAttribute('href'); 
+                        const thumbnailUrl = imageElement.src;
+                        
+                        const card = document.createElement('div');
+                        card.className = 'match-card';
+                        card.tabIndex = 0;
+                        card.dataset.matchUrl = `https://hoofoot.com/${matchRelativeUrl}`;
+                        card.dataset.matchTitle = title;
+                        card.innerHTML = `<img src="${thumbnailUrl}" alt="${title}" loading="lazy"><h2>${title}</h2>`;
+                        
+                        card.addEventListener('click', () => playVideo(card.dataset.matchUrl, card.dataset.matchTitle));
+                        card.addEventListener('focus', () => {
+                            currentFocusIndex = index;
+                            // Remove focused class from all cards
+                            matchCards.forEach(c => c.classList.remove('focused'));
+                            card.classList.add('focused');
+                        });
+                        card.addEventListener('blur', () => {
+                            card.classList.remove('focused');
+                        });
+                        
+                        grid.appendChild(card);
+                        matchCards.push(card);
+                    }
+                });
+                
+                // Set initial focus
+                if (matchCards.length > 0) {
+                    updateFocus(0);
+                }
+                
+            } catch (error) {
+                loadingIndicator.textContent = `Failed to load matches. Error: ${error.message}`;
+                console.error(error);
+            }
+        }
+
+        async function playVideo(matchUrl, matchTitle) {
+            const modal = document.getElementById('video-modal');
+            const videoTitle = document.getElementById('video-title');
+            const videoLoading = document.getElementById('video-loading');
+            
+            isModalOpen = true;
+            videoTitle.textContent = matchTitle;
+            videoLoading.textContent = 'Step 1/3: Fetching match page...';
+            modal.classList.add('modal-visible');
+            
+            try {
+                let response = await fetch(`${PROXY_BASE_URL}${encodeURIComponent(matchUrl)}`);
+                if (!response.ok) throw new Error('Could not fetch match page.');
+                
+                let htmlText = await response.text();
+                let doc = new DOMParser().parseFromString(htmlText, 'text/html');
+                const embedLink = doc.querySelector('#player a');
+                if (!embedLink) throw new Error('Could not find embed link on match page.');
+                
+                const embedUrl = embedLink.href;
+                videoLoading.textContent = 'Step 2/3: Fetching video embed page...';
+                
+                response = await fetch(`${PROXY_BASE_URL}${encodeURIComponent(embedUrl)}`);
+                if (!response.ok) throw new Error('Could not fetch embed page.');
+                
+                htmlText = await response.text();
+                const m3u8Regex = /src:{hls:'(.*?)'}/;
+                const match = htmlText.match(m3u8Regex);
+                
+                if (!match || !match[1]) throw new Error('Could not find M3U8 URL on embed page.');
+                
+                const m3u8Url = new URL(match[1], embedUrl).href;
+                videoLoading.textContent = 'Step 3/3: Loading video...';
+                console.log('Found M3U8 Stream:', m3u8Url);
+                
+                const video = document.getElementById('video-player');
+                
+                if (Hls.isSupported()) {
+                    if (video.hls) { 
+                        video.hls.destroy(); 
+                    }
+                    
+                    const rewrittenM3u8Url = `${M3U8_REWRITE_URL}${encodeURIComponent(m3u8Url)}`;
+                    console.log('Loading rewritten stream:', rewrittenM3u8Url);
+                    
+                    const hls = new Hls();
+                    video.hls = hls;
+                    hls.loadSource(rewrittenM3u8Url);
+                    hls.attachMedia(video);
+                    
+                    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                        video.play();
+                        videoLoading.textContent = '';
+                        // Enter fullscreen after video starts playing
+                        enterFullscreen(video);
+                    });
+                    
+                    hls.on(Hls.Events.ERROR, (event, data) => {
+                        console.error('HLS Error:', data);
+                        videoLoading.textContent = `HLS Error: ${data.type} - ${data.details}`;
+                    });
+                    
+                } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                    video.src = `${M3U8_REWRITE_URL}${encodeURIComponent(m3u8Url)}`;
+                    video.addEventListener('loadedmetadata', () => {
+                        video.play();
+                        videoLoading.textContent = '';
+                        enterFullscreen(video);
+                    });
+                } else {
+                    throw new Error('HLS is not supported in this browser');
+                }
+                
+            } catch (error) {
+                videoLoading.textContent = `Error: ${error.message}`;
+                console.error(error);
+            }
+        }
+        
+        function enterFullscreen(element) {
+            try {
+                if (element.requestFullscreen) {
+                    element.requestFullscreen();
+                } else if (element.webkitRequestFullscreen) {
+                    element.webkitRequestFullscreen();
+                } else if (element.mozRequestFullScreen) {
+                    element.mozRequestFullScreen();
+                } else if (element.msRequestFullscreen) {
+                    element.msRequestFullscreen();
+                }
+            } catch (error) {
+                console.log('Fullscreen not supported or failed:', error);
+            }
+        }
+        
+        // Handle fullscreen exit
+        document.addEventListener('fullscreenchange', () => {
+            if (!document.fullscreenElement && isModalOpen) {
+                // User exited fullscreen, they might want to close the modal
+                // Don't auto-close, but focus the close button
+                setTimeout(() => {
+                    document.getElementById('close-modal').focus();
+                }, 100);
+            }
+        });
+    </script>
+
+</body>
+</html>
